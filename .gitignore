@@ -1,0 +1,17 @@
+# Raw project data
+raw_data/
+
+# Local VS Code configuration
+.vscode/
+
+# SQL practice files not part of the portfolio project
+sql/practice_problems.sql
+
+# Environment / credential files
+.env
+.env.*
+*.env
+
+# Common local system files
+.DS_Store
+Thumbs.db
