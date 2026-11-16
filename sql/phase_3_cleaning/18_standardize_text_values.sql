@@ -348,3 +348,204 @@ WHERE customer_city <> LOWER(TRIM(customer_city));
 -- Limitation:
 -- NULL customer_city values are not replaced during Task 16.
 -- Missing-value handling is deferred to Task 20.
+
+
+-- ============================================================
+-- products.material
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 1. BUSINESS RULE
+-- ------------------------------------------------------------
+-- Remove leading and trailing whitespace from material values
+-- and standardize all non-NULL material values to lowercase,
+-- changing only formatting and preserving the underlying
+-- material category.
+
+
+-- ------------------------------------------------------------
+-- 2. INSPECT REPRESENTATIVE CHANGES
+-- ------------------------------------------------------------
+SELECT
+    product_id,
+    material AS original_material,
+    LOWER(TRIM(material)) AS cleaned_material
+FROM staging.products
+WHERE material <> LOWER(TRIM(material))
+LIMIT 20;
+
+
+-- ------------------------------------------------------------
+-- 3. QUANTIFY ROWS AFFECTED BY STANDARDIZATION
+-- ------------------------------------------------------------
+SELECT
+    COUNT(*) AS rows_to_standardize
+FROM staging.products
+WHERE material <> LOWER(TRIM(material));
+
+-- Verified result: 1,987 product rows
+
+
+-- ------------------------------------------------------------
+-- 4. ISOLATE WHITESPACE AND CAPITALIZATION EFFECTS
+-- ------------------------------------------------------------
+
+-- Rows containing leading/trailing whitespace.
+SELECT
+    COUNT(*) AS rows_to_trim
+FROM staging.products
+WHERE material <> TRIM(material);
+
+-- Verified result: 23 product rows
+
+
+-- Rows whose capitalization changes under the lowercase standard.
+SELECT
+    COUNT(*) AS rows_to_lower
+FROM staging.products
+WHERE material <> LOWER(material);
+
+-- Verified result: 1,987 product rows
+
+
+-- Rows affected by both whitespace and capitalization.
+SELECT
+    COUNT(*) AS rows_to_lower_and_trim
+FROM staging.products
+WHERE material <> TRIM(material)
+    AND TRIM(material) <> LOWER(TRIM(material));
+
+-- Verified result: 23 product rows
+-- All whitespace-affected material rows also require
+-- lowercase standardization.
+
+
+-- ------------------------------------------------------------
+-- 5. VALIDATE NULL AND BLANK VALUES
+-- ------------------------------------------------------------
+SELECT
+    COUNT(*) AS null_material_count
+FROM staging.products
+WHERE material IS NULL;
+
+-- Verified result: 13 rows
+-- Decision: Defer NULL handling to Task 20.
+
+
+SELECT
+    COUNT(*) AS blank_material_count
+FROM staging.products
+WHERE material IS NOT NULL
+    AND TRIM(material) = '';
+
+-- Verified result: 0 rows
+
+
+-- ------------------------------------------------------------
+-- 6. COMPARE RAW VS. CLEANED DISTINCT MATERIAL VALUES
+-- ------------------------------------------------------------
+SELECT
+    COUNT(DISTINCT material) AS raw_distinct_material_count
+FROM staging.products
+WHERE material IS NOT NULL;
+
+-- Verified result: 10 distinct raw material values
+
+
+SELECT
+    COUNT(DISTINCT LOWER(TRIM(material)))
+        AS cleaned_distinct_material_count
+FROM staging.products
+WHERE material IS NOT NULL;
+
+-- Verified result: 5 distinct cleaned material values
+
+
+-- Reconciliation:
+-- 10 raw distinct material values
+-- - 5 cleaned distinct material values
+-- = 5 redundant raw text representations removed
+--   during standardization.
+
+
+-- ------------------------------------------------------------
+-- 7. VALIDATE MULTIPLE RAW VARIANTS
+-- ------------------------------------------------------------
+SELECT
+    LOWER(TRIM(material)) AS normalized_material,
+    COUNT(DISTINCT material) AS raw_distinct_material_count
+FROM staging.products
+WHERE material IS NOT NULL
+GROUP BY LOWER(TRIM(material))
+HAVING COUNT(DISTINCT material) > 1
+ORDER BY normalized_material;
+
+-- Verified result:
+-- 5 normalized material categories have multiple raw variants.
+-- Each normalized category has exactly 2 distinct raw variants.
+
+
+-- ------------------------------------------------------------
+-- 8. INSPECT REPRESENTATIVE RAW VARIANTS
+-- ------------------------------------------------------------
+SELECT DISTINCT
+    material AS raw_material,
+    LOWER(TRIM(material)) AS normalized_material
+FROM staging.products
+WHERE LOWER(TRIM(material)) = 'metal';
+
+-- Verified example:
+-- " METAL " -> "metal"
+-- "Metal"    -> "metal"
+
+
+-- ------------------------------------------------------------
+-- 9. CONTROL-TOTAL RECONCILIATION
+-- ------------------------------------------------------------
+SELECT
+    COUNT(*) AS total_product_rows
+FROM staging.products;
+
+-- Verified result: 2,000 rows
+
+-- Reconciliation:
+-- 1,987 non-NULL material rows standardized
+-- + 13 NULL material rows
+-- = 2,000 total product rows
+--
+-- All product rows are accounted for.
+-- NULL material values are preserved for Task 20.
+
+
+-- ------------------------------------------------------------
+-- 10. FINAL CLEANING CANDIDATE
+-- ------------------------------------------------------------
+SELECT
+    product_id,
+    material AS original_material,
+    LOWER(TRIM(material)) AS cleaned_material
+FROM staging.products
+WHERE material <> LOWER(TRIM(material));
+
+
+-- ------------------------------------------------------------
+-- FINAL DECISION / VERIFIED RESULTS
+-- ------------------------------------------------------------
+-- Decision:
+-- Apply LOWER(TRIM(material)) to populated material values
+-- in the clean layer.
+--
+-- Verified results:
+-- Total product rows: 2,000
+-- Rows standardized: 1,987
+-- Rows containing leading/trailing whitespace: 23
+-- NULL material values: 13
+-- Blank-after-TRIM values: 0
+-- Raw distinct material values: 10
+-- Cleaned distinct material values: 5
+-- Normalized material categories with multiple raw variants: 5
+-- Raw variants per normalized material category: 2
+--
+-- Limitation:
+-- NULL material values are not replaced during Task 16.
+-- Missing-value handling is deferred to Task 20.
