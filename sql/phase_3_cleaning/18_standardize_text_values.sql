@@ -372,3 +372,129 @@ SELECT
 FROM color_validation
 WHERE original_color <> cleaned_color
 ORDER BY product_id;
+
+
+
+-- ============================================================
+-- Orders: sales_channel
+-- Business rule:
+-- Remove leading/trailing whitespace and standardize populated
+-- sales_channel values to lowercase while preserving the
+-- underlying sales-channel meaning.
+--
+-- Approved transformation: LOWER(TRIM(sales_channel))
+-- Grain: one row = one order
+-- ============================================================
+
+
+-- 1. Summary validation
+WITH sales_channel_validation AS (
+    SELECT
+        order_id,
+        sales_channel AS original_sales_channel,
+        LOWER(TRIM(sales_channel)) AS cleaned_sales_channel,
+
+        CASE
+            WHEN sales_channel <> TRIM(sales_channel) THEN 1
+            ELSE 0
+        END AS needs_trim_flag,
+
+        CASE
+            WHEN sales_channel <> LOWER(sales_channel) THEN 1
+            ELSE 0
+        END AS needs_lowercase_flag,
+
+        CASE
+            WHEN sales_channel IS NULL THEN 1
+            ELSE 0
+        END AS null_sales_channel_flag,
+
+        CASE
+            WHEN sales_channel IS NOT NULL
+                AND TRIM(sales_channel) = '' THEN 1
+            ELSE 0
+        END AS blank_after_trim_flag
+
+    FROM staging.orders
+)
+
+SELECT
+    COUNT(*) AS total_order_rows,
+    SUM(needs_trim_flag) AS rows_requiring_trim,
+    SUM(needs_lowercase_flag) AS rows_requiring_lowercase,
+    SUM(null_sales_channel_flag) AS null_sales_channel_count,
+    SUM(blank_after_trim_flag) AS blank_after_trim_count,
+    COUNT(*) FILTER (
+        WHERE original_sales_channel <> cleaned_sales_channel
+    ) AS rows_changed_by_cleaning
+FROM sales_channel_validation;
+
+
+-- 2. Compare raw vs. cleaned distinct sales_channel values
+WITH sales_channel_validation AS (
+    SELECT
+        sales_channel AS original_sales_channel,
+        LOWER(TRIM(sales_channel)) AS cleaned_sales_channel
+    FROM staging.orders
+)
+
+SELECT
+    COUNT(DISTINCT original_sales_channel) AS raw_distinct_sales_channel_count,
+    COUNT(DISTINCT cleaned_sales_channel) AS cleaned_distinct_sales_channel_count
+FROM sales_channel_validation;
+
+
+-- 3. Identify cleaned sales channels with multiple raw representations
+WITH sales_channel_validation AS (
+    SELECT
+        sales_channel AS original_sales_channel,
+        LOWER(TRIM(sales_channel)) AS cleaned_sales_channel
+    FROM staging.orders
+)
+
+SELECT
+    cleaned_sales_channel,
+    COUNT(DISTINCT original_sales_channel) AS raw_variant_count
+FROM sales_channel_validation
+GROUP BY cleaned_sales_channel
+HAVING COUNT(DISTINCT original_sales_channel) > 1
+ORDER BY cleaned_sales_channel;
+
+
+-- 4. Inspect the actual raw variants and their frequency
+WITH sales_channel_validation AS (
+    SELECT
+        sales_channel AS original_sales_channel,
+        LOWER(TRIM(sales_channel)) AS cleaned_sales_channel
+    FROM staging.orders
+)
+
+SELECT
+    cleaned_sales_channel,
+    original_sales_channel,
+    COUNT(*) AS order_count
+FROM sales_channel_validation
+GROUP BY
+    cleaned_sales_channel,
+    original_sales_channel
+ORDER BY
+    cleaned_sales_channel,
+    original_sales_channel;
+
+
+-- 5. Final cleaning candidate
+WITH sales_channel_validation AS (
+    SELECT
+        order_id,
+        sales_channel AS original_sales_channel,
+        LOWER(TRIM(sales_channel)) AS cleaned_sales_channel
+    FROM staging.orders
+)
+
+SELECT
+    order_id,
+    original_sales_channel,
+    cleaned_sales_channel
+FROM sales_channel_validation
+WHERE original_sales_channel <> cleaned_sales_channel
+ORDER BY order_id;
