@@ -549,3 +549,126 @@ WHERE material <> LOWER(TRIM(material));
 -- Limitation:
 -- NULL material values are not replaced during Task 16.
 -- Missing-value handling is deferred to Task 20.
+
+-- ============================================================
+-- Products: color
+-- Business rule:
+-- Remove leading/trailing whitespace and standardize populated
+-- color values to lowercase while preserving color meaning.
+--
+-- Approved transformation: LOWER(TRIM(color))
+-- Grain: one row = one product
+-- ============================================================
+
+
+-- 1. Summary validation
+WITH color_validation AS (
+    SELECT
+        product_id,
+        color AS original_color,
+        LOWER(TRIM(color)) AS cleaned_color,
+
+        CASE
+            WHEN color <> TRIM(color) THEN 1
+            ELSE 0
+        END AS needs_trim_flag,
+
+        CASE
+            WHEN color <> LOWER(color) THEN 1
+            ELSE 0
+        END AS needs_lowercase_flag,
+
+        CASE
+            WHEN color IS NULL THEN 1
+            ELSE 0
+        END AS null_color_flag,
+
+        CASE
+            WHEN color IS NOT NULL
+                AND TRIM(color) = '' THEN 1
+            ELSE 0
+        END AS blank_after_trim_flag
+
+    FROM staging.products
+)
+
+SELECT
+    COUNT(*) AS total_product_rows,
+    SUM(needs_trim_flag) AS rows_requiring_trim,
+    SUM(needs_lowercase_flag) AS rows_requiring_lowercase,
+    SUM(null_color_flag) AS null_color_count,
+    SUM(blank_after_trim_flag) AS blank_after_trim_count,
+    COUNT(*) FILTER (
+        WHERE original_color <> cleaned_color
+    ) AS rows_changed_by_cleaning
+FROM color_validation;
+
+
+-- 2. Compare raw vs. cleaned distinct color values
+WITH color_validation AS (
+    SELECT
+        color AS original_color,
+        LOWER(TRIM(color)) AS cleaned_color
+    FROM staging.products
+)
+
+SELECT
+    COUNT(DISTINCT original_color) AS raw_distinct_color_count,
+    COUNT(DISTINCT cleaned_color) AS cleaned_distinct_color_count
+FROM color_validation;
+
+
+-- 3. Identify cleaned colors with multiple raw representations
+WITH color_validation AS (
+    SELECT
+        color AS original_color,
+        LOWER(TRIM(color)) AS cleaned_color
+    FROM staging.products
+)
+
+SELECT
+    cleaned_color,
+    COUNT(DISTINCT original_color) AS raw_variant_count
+FROM color_validation
+GROUP BY cleaned_color
+HAVING COUNT(DISTINCT original_color) > 1
+ORDER BY cleaned_color;
+
+
+-- 4. Inspect the actual raw variants and their frequency
+WITH color_validation AS (
+    SELECT
+        color AS original_color,
+        LOWER(TRIM(color)) AS cleaned_color
+    FROM staging.products
+)
+
+SELECT
+    cleaned_color,
+    original_color,
+    COUNT(*) AS product_count
+FROM color_validation
+GROUP BY
+    cleaned_color,
+    original_color
+ORDER BY
+    cleaned_color,
+    original_color;
+
+
+-- 5. Final cleaning candidate
+WITH color_validation AS (
+    SELECT
+        product_id,
+        color AS original_color,
+        LOWER(TRIM(color)) AS cleaned_color
+    FROM staging.products
+)
+
+SELECT
+    product_id,
+    original_color,
+    cleaned_color
+FROM color_validation
+WHERE original_color <> cleaned_color
+ORDER BY product_id;
