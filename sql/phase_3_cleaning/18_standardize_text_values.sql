@@ -627,3 +627,129 @@ SELECT
 FROM order_status_validation
 WHERE original_order_status <> cleaned_order_status
 ORDER BY order_id;
+
+
+-- ============================================================
+-- Orders: requested_service_level
+-- Business rule:
+-- Remove leading/trailing whitespace and standardize populated
+-- requested_service_level values to lowercase while preserving the
+-- underlying requested_service_level meaning.
+--
+-- Approved transformation: LOWER(TRIM(requested_service_level))
+-- Grain: one row = one order
+--
+-- Note:
+-- NULL requested_service_level values are preserved.
+-- Missing-value handling is deferred to Task 20.
+-- ============================================================
+
+-- 1. Summary validation
+WITH requested_service_level_validation AS (
+    SELECT
+        order_id,
+        requested_service_level AS original_requested_service_level,
+        LOWER(TRIM(requested_service_level)) AS cleaned_requested_service_level,
+
+        CASE
+            WHEN requested_service_level <> TRIM(requested_service_level) THEN 1
+            ELSE 0
+        END AS needs_trim_flag,
+
+        CASE
+            WHEN requested_service_level <> LOWER(requested_service_level) THEN 1
+            ELSE 0
+        END AS needs_lowercase_flag,
+
+        CASE
+            WHEN requested_service_level IS NULL THEN 1
+            ELSE 0
+        END AS null_requested_service_level_flag,
+
+        CASE
+            WHEN requested_service_level IS NOT NULL
+                AND TRIM(requested_service_level) = '' THEN 1
+            ELSE 0
+        END AS blank_after_trim_flag
+
+    FROM staging.orders
+)
+
+SELECT
+    COUNT(*) AS total_order_rows,
+    SUM(needs_trim_flag) AS rows_requiring_trim,
+    SUM(needs_lowercase_flag) AS rows_requiring_lowercase,
+    SUM(null_requested_service_level_flag) AS null_requested_service_level_count,
+    SUM(blank_after_trim_flag) AS blank_after_trim_count,
+    COUNT(*) FILTER (
+        WHERE original_requested_service_level <> cleaned_requested_service_level
+    ) AS rows_changed_by_cleaning
+FROM requested_service_level_validation;
+
+-- 2. Compare raw vs. cleaned distinct requested_service_level values
+WITH requested_service_level_validation AS (
+    SELECT
+        requested_service_level AS original_requested_service_level,
+        LOWER(TRIM(requested_service_level)) AS cleaned_requested_service_level
+    FROM staging.orders
+)
+
+SELECT
+    COUNT(DISTINCT original_requested_service_level) AS raw_distinct_requested_service_level_count,
+    COUNT(DISTINCT cleaned_requested_service_level) AS cleaned_distinct_requested_service_level_count
+FROM requested_service_level_validation;
+
+-- 3. Identify cleaned requested service level with multiple raw representations
+WITH requested_service_level_validation AS (
+    SELECT
+        requested_service_level AS original_requested_service_level,
+        LOWER(TRIM(requested_service_level)) AS cleaned_requested_service_level
+    FROM staging.orders
+)
+
+SELECT
+    cleaned_requested_service_level,
+    COUNT(DISTINCT original_requested_service_level) AS raw_variant_count
+FROM requested_service_level_validation
+GROUP BY cleaned_requested_service_level
+HAVING COUNT(DISTINCT original_requested_service_level) > 1
+ORDER BY cleaned_requested_service_level;
+
+
+-- 4. Inspect the actual raw variants and their frequency
+WITH requested_service_level_validation AS (
+    SELECT
+        requested_service_level AS original_requested_service_level,
+        LOWER(TRIM(requested_service_level)) AS cleaned_requested_service_level
+    FROM staging.orders
+)
+
+SELECT
+    cleaned_requested_service_level,
+    original_requested_service_level,
+    COUNT(*) AS order_count
+FROM requested_service_level_validation
+GROUP BY
+    cleaned_requested_service_level,
+    original_requested_service_level
+ORDER BY
+    cleaned_requested_service_level,
+    original_requested_service_level;
+
+
+-- 5. Final cleaning candidate
+WITH requested_service_level_validation AS (
+    SELECT
+        order_id,
+        requested_service_level AS original_requested_service_level,
+        LOWER(TRIM(requested_service_level)) AS cleaned_requested_service_level
+    FROM staging.orders
+)
+
+SELECT
+    order_id,
+    original_requested_service_level,
+    cleaned_requested_service_level
+FROM requested_service_level_validation
+WHERE original_requested_service_level <> cleaned_requested_service_level
+ORDER BY order_id;
