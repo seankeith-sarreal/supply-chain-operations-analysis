@@ -498,3 +498,132 @@ SELECT
 FROM sales_channel_validation
 WHERE original_sales_channel <> cleaned_sales_channel
 ORDER BY order_id;
+
+
+-- ============================================================
+-- Orders: order_status
+-- Business rule:
+-- Remove leading/trailing whitespace and standardize populated
+-- order_status values to lowercase while preserving the
+-- underlying order_status meaning.
+--
+-- Approved transformation: LOWER(TRIM(order_status))
+-- Grain: one row = one order
+--
+-- Note:
+-- Legacy status labels are standardized for whitespace/case only.
+-- Semantic mapping of legacy statuses is deferred to Task 17.
+-- ============================================================
+
+
+-- 1. Summary validation
+WITH order_status_validation AS (
+    SELECT
+        order_id,
+        order_status AS original_order_status,
+        LOWER(TRIM(order_status)) AS cleaned_order_status,
+
+        CASE
+            WHEN order_status <> TRIM(order_status) THEN 1
+            ELSE 0
+        END AS needs_trim_flag,
+
+        CASE
+            WHEN order_status <> LOWER(order_status) THEN 1
+            ELSE 0
+        END AS needs_lowercase_flag,
+
+        CASE
+            WHEN order_status IS NULL THEN 1
+            ELSE 0
+        END AS null_order_status_flag,
+
+        CASE
+            WHEN order_status IS NOT NULL
+                AND TRIM(order_status) = '' THEN 1
+            ELSE 0
+        END AS blank_after_trim_flag
+
+    FROM staging.orders
+)
+
+SELECT
+    COUNT(*) AS total_order_rows,
+    SUM(needs_trim_flag) AS rows_requiring_trim,
+    SUM(needs_lowercase_flag) AS rows_requiring_lowercase,
+    SUM(null_order_status_flag) AS null_order_status_count,
+    SUM(blank_after_trim_flag) AS blank_after_trim_count,
+    COUNT(*) FILTER (
+        WHERE original_order_status <> cleaned_order_status
+    ) AS rows_changed_by_cleaning
+FROM order_status_validation;
+
+
+-- 2. Compare raw vs. cleaned distinct order_status values
+WITH order_status_validation AS (
+    SELECT
+        order_status AS original_order_status,
+        LOWER(TRIM(order_status)) AS cleaned_order_status
+    FROM staging.orders
+)
+
+SELECT
+    COUNT(DISTINCT original_order_status) AS raw_distinct_order_status_count,
+    COUNT(DISTINCT cleaned_order_status) AS cleaned_distinct_order_status_count
+FROM order_status_validation;
+
+
+-- 3. Identify cleaned order statuses with multiple raw representations
+WITH order_status_validation AS (
+    SELECT
+        order_status AS original_order_status,
+        LOWER(TRIM(order_status)) AS cleaned_order_status
+    FROM staging.orders
+)
+
+SELECT
+    cleaned_order_status,
+    COUNT(DISTINCT original_order_status) AS raw_variant_count
+FROM order_status_validation
+GROUP BY cleaned_order_status
+HAVING COUNT(DISTINCT original_order_status) > 1
+ORDER BY cleaned_order_status;
+
+
+-- 4. Inspect the actual raw variants and their frequency
+WITH order_status_validation AS (
+    SELECT
+        order_status AS original_order_status,
+        LOWER(TRIM(order_status)) AS cleaned_order_status
+    FROM staging.orders
+)
+
+SELECT
+    cleaned_order_status,
+    original_order_status,
+    COUNT(*) AS order_count
+FROM order_status_validation
+GROUP BY
+    cleaned_order_status,
+    original_order_status
+ORDER BY
+    cleaned_order_status,
+    original_order_status;
+
+
+-- 5. Final cleaning candidate
+WITH order_status_validation AS (
+    SELECT
+        order_id,
+        order_status AS original_order_status,
+        LOWER(TRIM(order_status)) AS cleaned_order_status
+    FROM staging.orders
+)
+
+SELECT
+    order_id,
+    original_order_status,
+    cleaned_order_status
+FROM order_status_validation
+WHERE original_order_status <> cleaned_order_status
+ORDER BY order_id;
